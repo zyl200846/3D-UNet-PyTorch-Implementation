@@ -3,8 +3,8 @@
 # @Time: 27/08/2019 08:54
 import torch
 import torch.nn as nn
-from unet3d.unet3d import UnetModel, Trainer
-from unet3d.loss import DiceLoss
+from unet3d_model.unet3d import UnetModel, Trainer
+from unet3d_model.loss import DiceLoss
 from data_gen import get_data_paths, data_gen, batch_data_gen
 
 

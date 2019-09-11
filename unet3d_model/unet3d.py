@@ -5,7 +5,7 @@ import sys
 import time
 import torch
 import torch.nn as nn
-from unet3d.building_components import EncoderBlock, DecoderBlock
+from unet3d_model.unet3d_components import EncoderBlock, DecoderBlock
 sys.path.append("..")
 
 
@@ -94,7 +94,7 @@ class Trainer(object):
 
 
 if __name__ == "__main__":
-    inputs = torch.randn(1, 1, 96, 96, 96)
+    inputs = torch.randn(1, 1, 64, 64, 64)
     print("The shape of inputs: ", inputs.shape)
     data_folder = "../processed"
     model = UnetModel(in_channels=1, out_channels=1)

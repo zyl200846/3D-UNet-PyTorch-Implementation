@@ -22,7 +22,7 @@ def get_results_path(data_dir):
 
 def rotate(image_path):
     """
-    This function should be added to reconstruction function if flip augmentation is used while training unet3d
+    This function should be added to reconstruction function if flip augmentation is used while training unet3d_model
     :param image_path: the patch prediction path
     :return: rotated image
     """

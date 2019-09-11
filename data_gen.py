@@ -25,7 +25,7 @@ def get_data_paths(data_dir, modality):
         for fn in obj_names:
             path = os.path.join(subject_dir, modality, fn)
             data_paths.append(path)
-    print(data_paths)
+    # print(data_paths)
     return data_paths
 
 

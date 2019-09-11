@@ -9,4 +9,4 @@ Here describes the function of each file and folder
 # Training results
 Here shows the training results including training loss and mIOU.
 
-Note: Due to the limited hardward resources, the code are not yet successfuuly tested. WIP.
+**Note: Due to the limited hardward resources, the code are not yet successfuuly tested. WIP.**

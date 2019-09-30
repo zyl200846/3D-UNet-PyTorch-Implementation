@@ -5,6 +5,7 @@ import os
 import glob
 import json
 import SimpleITK as sitk
+from utils import label_converter
 
 
 def fetch_data_path(data_dir):
@@ -39,6 +40,7 @@ def get_data(data_path):
     pet_img = sitk.GetArrayFromImage(sitk.ReadImage(pet_path))
     ct_img = sitk.GetArrayFromImage(sitk.ReadImage(ct_path))
     mask = sitk.GetArrayFromImage(sitk.ReadImage(mask_path))
+    mask = label_converter(mask)
     return [pet_img, ct_img, mask]
 
 
@@ -52,7 +54,7 @@ def get_img_patch_idxs(img, overlap_stepsize):
     """
     patch_idxs = []
     depth, height, width = img.shape
-    patch_depth, patch_height, patch_width = 96, 96, 96
+    patch_depth, patch_height, patch_width = 128, 128, 128
 
     depth_range = list(range(0, depth - patch_depth + 1, overlap_stepsize))
     height_range = list(range(0, height - patch_height + 1, overlap_stepsize))
@@ -83,7 +85,7 @@ def crop_image(data_path, output_path, overlap_stepsize):
             stores number of patches for a single volumetric image and indices for that image
     """
     patch_dict = dict()
-    patch_depth, patch_height, patch_width = 96, 96, 96
+    patch_depth, patch_height, patch_width = 128, 128, 128
     no_sample = len(data_path)
 
     for i in range(no_sample):

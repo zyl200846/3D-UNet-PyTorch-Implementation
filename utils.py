@@ -34,3 +34,13 @@ def label_converter(mask_data):
         new_masks[i] = np.where(mask_data[i] > 0, 1, 0)
 
     return new_masks
+
+
+if __name__ == "__main__":
+    import SimpleITK as sitk
+    import sys
+    np.set_printoptions(threshold=sys.maxsize)
+    img = sitk.GetArrayFromImage(sitk.ReadImage("data/STS_001/STS_001_PT_COR_16.tiff"))
+    print(img.shape)
+    img = img / 255.
+    print(img[64])

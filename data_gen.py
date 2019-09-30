@@ -37,9 +37,10 @@ def data_gen(data_paths, mask_paths):
     :return: PET images with batch and
     """
     no_samples = len(data_paths)
-    pet_imgs = np.zeros(shape=(no_samples, 1, 96, 96, 96), dtype=np.float32)   # change patch shape if necessary
-    mask_imgs = np.zeros(shape=(no_samples, 1, 96, 96, 96), dtype=np.float32)
+    pet_imgs = np.zeros(shape=(no_samples, 1, 128, 128, 128), dtype=np.float32)   # change patch shape if necessary
+    mask_imgs = np.zeros(shape=(no_samples, 1, 128, 128, 128), dtype=np.float32)
     for i, (pet_path, mask_path) in tqdm(enumerate(zip(data_paths, mask_paths)), total=no_samples):
+        # print(pet_path)
         pet = sitk.GetArrayFromImage(sitk.ReadImage(pet_path))
         mask = sitk.GetArrayFromImage(sitk.ReadImage(mask_path))
         # insert one dimension to the existing data as image channel
@@ -51,14 +52,14 @@ def data_gen(data_paths, mask_paths):
         mask_imgs[i] = mask
 
     # Normalize data and convert label value to either 1 or 0
-    pet_imgs = normalize(pet_imgs)
+    pet_imgs = pet_imgs / 255.
     mask_imgs = label_converter(mask_imgs)
 
     print("Loading and Process Complete!")
     return pet_imgs, mask_imgs
 
 
-def batch_data_gen(pet_imgs, mask_imgs, iter_step, batch_size=2):
+def batch_data_gen(pet_imgs, mask_imgs, iter_step, batch_size=6):
     """
     Get training batch to feed convolution neural network
     :param pet_imgs: the whole batch of pet images
@@ -73,22 +74,28 @@ def batch_data_gen(pet_imgs, mask_imgs, iter_step, batch_size=2):
     mask_imgs = mask_imgs[permutation_idxs]
 
     # count iteration step to get corresponding training batch
-    step_count = batch_size + iter_step
+    step_count = batch_size * iter_step
+    print(step_count)
     return pet_imgs[step_count: batch_size + step_count], mask_imgs[step_count: batch_size + step_count]
 
 
 if __name__ == "__main__":
+    import natsort
     data_folder = "processed"
     modalities = ["PET", "MASK"]
     pp = get_data_paths(data_folder, "PET")
     mp = get_data_paths(data_folder, "MASK")
-    pms, mgs = data_gen(pp, mp)
-    print(pms.shape)
-    # print(pms[119][0, 0, :, :])
-    # print(mgs[119][0, :, :])
-    steps = len(pms) // 16
-    for k in range(steps):
-        pet_ims, mask_ims = batch_data_gen(pms, mgs, k, batch_size=16)
-        print(pet_ims.shape)
+    pp = natsort.natsorted(pp)
+    mp = natsort.natsorted(mp)
+    print(pp)
+    print(mp)
+    # pms, mgs = data_gen(pp, mp)
+    # print(pms.shape)
+    # print(pms[91][0, 0, :, :])
+    # print(mgs[91][0, 0, :, :])
+    # steps = len(pms) // 16
+    # for k in range(steps):
+    #     pet_ims, mask_ims = batch_data_gen(pms, mgs, k, batch_size=16)
+    #     print(pet_ims.shape)
     # pet_example = sitk.GetArrayFromImage(sitk.ReadImage("data/STS_001/STS_001_PT_COR_16.tiff"))
     # print(pet_example[136, :, :])

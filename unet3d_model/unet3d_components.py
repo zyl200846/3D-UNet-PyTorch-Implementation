@@ -1,128 +1,159 @@
 # _*_ coding: utf-8 _*_
 # Author: Jielong
 # @Time: 21/08/2019 15:52
-import numpy as np
 import torch
-import torch.nn as nn
+from torch.nn import init
 import torch.nn.functional as F
 
 
-class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, k_size=3, stride=1, padding=1):
-        super(ConvBlock, self).__init__()
-        self.conv3d = nn.Conv3d(in_channels=in_channels, out_channels=out_channels, kernel_size=k_size,
-                                stride=stride, padding=padding)
-        self.batch_norm = nn.BatchNorm3d(num_features=out_channels)
-
-    def forward(self, x):
-        x = self.batch_norm(self.conv3d(x))
-        x = F.leaky_relu(x)
-        return x
+def weight_init(in_channels, out_channels, k_size, cuda_available=True):
+    weight = torch.empty(size=(out_channels, in_channels, k_size, k_size, k_size))
+    weight = init.kaiming_normal_(tensor=weight, mode="fan_in", nonlinearity="leaky_relu")
+    if cuda_available:
+        return weight.cuda()
+    else:
+        return weight
 
 
-class EncoderBlock(nn.Module):
-    def __init__(self, in_channels, model_depth=4, pool_size=2):
-        super(EncoderBlock, self).__init__()
-        self.root_feat_maps = 16
-        self.num_conv_blocks = 2
-        self.module_list = nn.ModuleList()
-        for depth in range(model_depth):
-            feat_map_channels = 2 ** (depth + 1) * self.root_feat_maps
-            for i in range(self.num_conv_blocks):
-                # print("depth {}, conv {}".format(depth, i))
-                if depth == 0:
-                    # print(in_channels, feat_map_channels)
-                    self.conv_block = ConvBlock(in_channels=in_channels, out_channels=feat_map_channels)
-                    self.module_list.append(self.conv_block)
-                    in_channels, feat_map_channels = feat_map_channels, feat_map_channels * 2
-                else:
-                    # print(in_channels, feat_map_channels)
-                    self.conv_block = ConvBlock(in_channels=in_channels, out_channels=feat_map_channels)
-                    self.module_list.append(self.conv_block)
-                    in_channels, feat_map_channels = feat_map_channels, feat_map_channels * 2
-            if depth < model_depth - 1:
-                self.pooling = nn.MaxPool3d(kernel_size=pool_size, stride=2, padding=0)
-                self.module_list.append(self.pooling)
-            else:
-                break
-
-    def forward(self, x):
-        down_sampling_features = []
-        for i, op in enumerate(self.module_list):
-            x = op(x)
-            # here can use nn.ModuleDict() to avoid using problem caused by list
-            if i in [1, 4, 7]:
-                down_sampling_features.append(x)
-        return x, down_sampling_features
+def bias_init(out_channels, val, cuda_available=True):
+    b = torch.empty(out_channels)
+    if cuda_available:
+        return init.constant_(tensor=b, val=val).cuda()
+    else:
+        return init.constant_(tensor=b, val=val)
 
 
-class ConvTranspose(nn.Module):
-    def __init__(self, in_channels, out_channels, k_size=3, stride=2, padding=1, output_padding=1):
-        super(ConvTranspose, self).__init__()
-        self.conv3d_transpose = nn.ConvTranspose3d(in_channels=in_channels,
-                                                   out_channels=out_channels,
-                                                   kernel_size=k_size,
-                                                   stride=stride,
-                                                   padding=padding,
-                                                   output_padding=output_padding)
-
-    def forward(self, x):
-        return self.conv3d_transpose(x)
+def conv3d_block(x, w, b, stride=1, padding=1, dropout_rate=0.3, training=True, cuda_available=True):
+    x = F.conv3d(input=x, weight=w, bias=b, stride=stride, padding=padding)
+    if cuda_available:
+        x = torch.nn.BatchNorm3d(x.shape[1]).cuda()(x)
+    else:
+        x = torch.nn.BatchNorm3d(x.shape[1])(x)
+    x = F.leaky_relu(x)
+    return F.dropout3d(input=x, p=dropout_rate, training=training)
 
 
-class DecoderBlock(nn.Module):
-    def __init__(self, out_channels, model_depth=4):
-        super(DecoderBlock, self).__init__()
-        self.num_conv_blocks = 2
-        self.num_feat_maps = 16
-        # user nn.ModuleDict() to store ops
-        self.module_dict = nn.ModuleDict()
+def max_pool3d(x, k_size=2, stride=2, padding=0):
+    return torch.nn.MaxPool3d(kernel_size=k_size, stride=stride, padding=padding)(x)
 
-        for depth in range(model_depth - 2, -1, -1):
-            # print(depth)
-            feat_map_channels = 2 ** (depth + 1) * self.num_feat_maps
-            # print(feat_map_channels * 4)
-            self.deconv = ConvTranspose(in_channels=feat_map_channels * 4, out_channels=feat_map_channels * 4)
-            self.module_dict["deconv_{}".format(depth)] = self.deconv
-            for i in range(self.num_conv_blocks):
-                if i == 0:
-                    self.conv = ConvBlock(in_channels=feat_map_channels * 6, out_channels=feat_map_channels * 2)
-                    self.module_dict["conv_{}_{}".format(depth, i)] = self.conv
-                else:
-                    self.conv = ConvBlock(in_channels=feat_map_channels * 2, out_channels=feat_map_channels * 2)
-                    self.module_dict["conv_{}_{}".format(depth, i)] = self.conv
+
+def conv3d_transpose(x, w, b, stride=2, padding=0, output_padding=1):
+    return F.conv_transpose3d(input=x, weight=w, bias=b, stride=stride,
+                              padding=padding, output_padding=output_padding)
+
+
+def analysis_path(x, model_depth=4, root_feature_map_channels=16, w_k_size=3, pool_k_size=2, conv_stride=1,
+                  pool_stride=2, conv_padding=1, pool_padding=0, dropout_rate=0.3, training=True,
+                  cuda_available=True):
+    # each analysis layer contains two convolution blocks, this should not be changed
+    num_conv_blocks = 2
+    # create dicts to store weight, bias and conv ops (include pooling op) for each conv block
+    weights = dict()
+    bias = dict()
+    conv_ops = dict()
+
+    for depth in range(model_depth):
+        conv = conv_ops["max_pool_{}".format(depth - 1)] if conv_ops else x
+        for i in range(num_conv_blocks):
+            feature_map_channels = 2 ** (depth + i) * root_feature_map_channels
+
             if depth == 0:
-                self.final_conv = ConvBlock(in_channels=feat_map_channels * 2, out_channels=out_channels)
-                self.module_dict["final_conv"] = self.final_conv
-
-    def forward(self, x, down_sampling_features):
-        """
-        :param x: inputs
-        :param down_sampling_features: feature maps from encoder path
-        :return: output
-        """
-        for k, op in self.module_dict.items():
-            if k.startswith("deconv"):
-                x = op(x)
-                x = torch.cat((down_sampling_features[int(k[-1])], x), dim=1)
-            elif k.startswith("conv"):
-                x = op(x)
+                in_channels = x.shape[1]
             else:
-                x = op(x)
-        return x
+                in_channels = conv_ops["conv_{}_{}".format(depth - 1, 1)].size()[1]
+            weights["weight_{}_{}".format(depth, i)] = weight_init(in_channels=in_channels,
+                                                                   out_channels=feature_map_channels,
+                                                                   k_size=w_k_size,
+                                                                   cuda_available=cuda_available)
+            bias["bias_{}_{}".format(depth, i)] = bias_init(out_channels=feature_map_channels, val=0.5,
+                                                            cuda_available=cuda_available)
+            conv_ops["conv_{}_{}".format(depth, i)] = conv3d_block(x=conv,
+                                                                   w=weights["weight_{}_{}".format(depth, i)],
+                                                                   b=bias["bias_{}_{}".format(depth, i)],
+                                                                   stride=conv_stride, padding=conv_padding,
+                                                                   dropout_rate=dropout_rate, training=training,
+                                                                   cuda_available=cuda_available)
+
+            print(conv_ops["conv_{}_{}".format(depth, i)].shape)
+        if depth < model_depth - 1:
+            conv_ops["max_pool_{}".format(depth)] = max_pool3d(conv_ops["conv_{}_{}".format(depth, 1)],
+                                                               k_size=pool_k_size, stride=pool_stride,
+                                                               padding=pool_padding)
+            print("The shape of x after max pooling: ", conv_ops["max_pool_{}".format(depth)].shape)
+        else:
+            break
+
+    return conv_ops, weights, bias
+
+
+def synthesis_path(conv_ops, model_depth=4, root_feature_map_channels=16, cuda_available=True):
+    # create dicts to store weight, bias and conv ops (include pooling op) for each conv block
+    weights = dict()
+    bias = dict()
+    conv_ops_up = dict()
+    num_conv_blocks = 2
+
+    for depth in range(model_depth - 2, -1, -1):
+        print(depth)
+        feature_map_channels = 2 ** (depth + 1) * root_feature_map_channels
+        # convolution transpose step
+        weights["deconv_weight_{}".format(depth)] = weight_init(in_channels=conv_ops["conv_{}_{}".format(depth + 1, 1)].shape[1],
+                                                                out_channels=conv_ops["conv_{}_{}".format(depth + 1, 1)].shape[1],
+                                                                k_size=3, cuda_available=cuda_available)
+        bias["deconv_bias_{}".format(depth)] = bias_init(out_channels=conv_ops["conv_{}_{}".format(depth + 1, 1)].shape[1],
+                                                         val=0.5, cuda_available=cuda_available)
+        conv_ops_up["conv_up_{}".format(depth)] = conv3d_transpose(x=conv_ops["conv_{}_{}".format(depth + 1, 1)],
+                                                                   w=weights["deconv_weight_{}".format(depth)],
+                                                                   b=bias["deconv_bias_{}".format(depth)],
+                                                                   stride=2, padding=1)
+        print("The shape after conv transpose: ", conv_ops_up["conv_up_{}".format(depth)].shape)
+
+        conv_ops_up["concat_{}".format(depth)] = torch.cat((conv_ops_up["conv_up_{}".format(depth)],
+                                                            conv_ops["conv_{}_{}".format(depth, 1)]), dim=1)
+        print("After concatenation: ", conv_ops_up["concat_{}".format(depth)].shape)
+        # up convolution followed by two 3 x 3 x 3 convolution operations
+        for i in range(num_conv_blocks):
+            weights["weight_{}_{}".format(depth, i)] = weight_init(in_channels=conv_ops_up["concat_{}".format(depth)].shape[1],
+                                                                   out_channels=feature_map_channels,
+                                                                   k_size=3,
+                                                                   cuda_available=cuda_available)
+            bias["bias_{}_{}".format(depth, i)] = bias_init(out_channels=feature_map_channels, val=0.5,
+                                                            cuda_available=cuda_available)
+            conv_ops_up["conv_{}_{}".format(depth, i)] = conv3d_block(x=conv_ops_up["concat_{}".format(depth)],
+                                                                      w=weights["weight_{}_{}".format(depth, i)],
+                                                                      b=bias["bias_{}_{}".format(depth, i)],
+                                                                      cuda_available=cuda_available)
+            print("hello: ", conv_ops_up["conv_{}_{}".format(depth, i)].shape)
+    return conv_ops_up, weights, bias
+
+
+def final_output(conv_ops_up, cuda_available=True):
+    weights, bias = dict(), dict()
+    weights["final"] = weight_init(out_channels=1, in_channels=32, k_size=3, cuda_available=cuda_available)
+    bias["final"] = bias_init(1, val=0.1, cuda_available=cuda_available)
+    output = conv3d_block(x=conv_ops_up["conv_{}_{}".format(0, 1)],
+                          w=weights["final"],
+                          b=bias["final"],
+                          stride=1,
+                          padding=1,
+                          dropout_rate=0.5,
+                          training=True, cuda_available=cuda_available)
+    print("The shape of final output: ", output.shape)
+    return output, weights, bias
+
+
+def crop_feature_maps():
+    pass
 
 
 if __name__ == "__main__":
-    # x has shape of (batch_size, channels, depth, height, width)
-    x_test = torch.randn(1, 1, 96, 96, 96)
-    x_test = x_test.cuda()
-    print("The shape of input: ", x_test.shape)
+    w1 = weight_init(in_channels=1, out_channels=16, k_size=3)
+    b1 = bias_init(out_channels=16, val=0.5)
+    inputs = torch.randn(1, 1, 96, 96, 96)
 
-    encoder = EncoderBlock(in_channels=1)
-    encoder.cuda()
-    x_test, h = encoder(x_test)
-
-    db = DecoderBlock(out_channels=1)
-    db.cuda()
-    x_test = db(x_test, h)
-
+    conv_results, analysis_weight_dict, analysis_bias_dict = analysis_path(inputs, model_depth=4, cuda_available=False)
+    print(conv_results.keys())
+    print("\n")
+    up_conv_results, w_dict, b_dict = synthesis_path(conv_results, model_depth=4, cuda_available=False)
+    print(up_conv_results.keys())
+    final_output(up_conv_results, cuda_available=False)

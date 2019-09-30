@@ -18,12 +18,28 @@ class DiceLoss(nn.Module):
         targets = targets.view(batch_size, -1).type(torch.FloatTensor)
         intersection = (logits * targets).sum(-1)
         dice_score = 2. * intersection / ((logits + targets).sum(-1) + self.epsilon)
-        dice_score = 1 - dice_score.sum() / batch_size
-        return dice_score
+        # dice_score = 1 - dice_score.sum() / batch_size
+        return torch.mean(1. - dice_score)
+
+
+class AsymmetricLoss(nn.Module):
+    def __init__(self, beta):
+        super(AsymmetricLoss, self).__init__()
+        # hyper-parameter for balancing precision and recall
+        self.beta = beta
+
+    def forward(self, targets, logits):
+        pass
 
 
 if __name__ == "__main__":
-    y_t = torch.randn(2, 3, 4, 3, 3)
-    y_p = torch.ones(2, 3, 4, 3, 3)
+    import numpy as np
+    yt = np.random.random(size=(2, 1, 3, 3, 3))
+    # print(yt)
+    yt = torch.from_numpy(yt)
+    yp = np.zeros(shape=(2, 1, 3, 3, 3))
+    yp = yp + 1
+    yp = torch.from_numpy(yp)
+    # print(yp)
     dl = DiceLoss()
-    print(dl(y_t, y_p).item())
+    print(dl(yp, yt).item())
